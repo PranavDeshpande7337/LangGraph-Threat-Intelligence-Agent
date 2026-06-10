@@ -33,3 +33,6 @@ class AgentState(TypedDict):
 
     # ── Final output ──────────────────────────────────────────────────────
     risk_report: dict                # structured final risk report
+
+    # ── MITRE ATT&CK mapping (populated after report_node) ────────────────
+    mitre_mapping: dict              # ATT&CK techniques mapped from risk_report

@@ -18,6 +18,7 @@ from graph.nodes import (
     abuseipdb_node,
     dns_node,
     report_node,
+    mitre_mapping_node,          # ADDITION
 )
 
 
@@ -67,6 +68,7 @@ def build_graph():
     graph.add_node("abuseipdb",       abuseipdb_node)
     graph.add_node("dns",             dns_node)
     graph.add_node("report",          report_node)
+    graph.add_node("mitre_mapping",   mitre_mapping_node)   # ADDITION
 
     # ── Entry point ────────────────────────────────────────────────────────
     graph.set_entry_point("input_guardrail")
@@ -98,7 +100,8 @@ def build_graph():
     graph.add_edge("abuseipdb",  "reasoning")
     graph.add_edge("dns",        "reasoning")
 
-    # ── Terminal node ──────────────────────────────────────────────────────
-    graph.add_edge("report", END)
+    # ── Report → MITRE mapping → END  (ADDITION: replaced direct report→END) ──
+    graph.add_edge("report",         "mitre_mapping")
+    graph.add_edge("mitre_mapping",  END)
 
     return graph.compile()

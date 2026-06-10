@@ -21,13 +21,15 @@ from core.tools import lookup_virustotal, lookup_abuseipdb, lookup_dns
 
 MAX_LOOPS = 4  # hard cap — prevents infinite loops
 
-# Initialise the LLM (Claude Haiku — fast and cheap for agent reasoning)
-llm = ChatAnthropic(
-    model="claude-haiku-4-5-20251001",
-    api_key=os.getenv("ANTHROPIC_API_KEY", ""),
-    max_tokens=1024,
-)
+from langchain_ollama import ChatOllama
 
+...
+
+llm = ChatOllama(
+    model=os.getenv("OLLAMA_MODEL", "llama3.2"),
+    temperature=0,
+    num_predict=1024,
+)
 
 # ── Node 1: Input guardrail ────────────────────────────────────────────────
 
@@ -272,3 +274,80 @@ def report_node(state: AgentState) -> dict:
         }
 
     return {"risk_report": report}
+
+# ── Node 5: MITRE ATT&CK mapping ──────────────────────────────────────────
+
+MITRE_SYSTEM_PROMPT = """You are a MITRE ATT&CK framework expert.
+Given a threat intelligence risk report, identify the most relevant ATT&CK techniques
+that match the observed adversary behaviour and infrastructure.
+
+Respond with ONLY a JSON object in this exact format:
+{
+  "mitre_techniques": [
+    {
+      "id": "T1583.001",
+      "name": "Acquire Infrastructure: Domains",
+      "relevance": "one sentence explaining why this technique applies to the findings"
+    }
+  ],
+  "tactic_categories": ["Reconnaissance", "Resource Development"]
+}
+
+Rules:
+- Include 2-5 techniques maximum — quality over quantity
+- Only include techniques directly supported by the report findings
+- tactic_categories must be valid ATT&CK tactic names
+- If findings are insufficient to map any technique, return:
+  {"mitre_techniques": [], "tactic_categories": [], "note": "Insufficient findings for ATT&CK mapping"}
+- Respond with ONLY the JSON object, no preamble
+"""
+
+
+def mitre_mapping_node(state: AgentState) -> dict:
+    """
+    Maps the completed risk report to MITRE ATT&CK techniques using the LLM.
+    Runs after report_node. Reads risk_report, writes mitre_mapping.
+    Gracefully handles empty or insufficient reports.
+    """
+    print(f"\n[MITRE] Mapping findings to ATT&CK techniques for: {state['target']}")
+
+    report = state.get("risk_report", {})
+
+    # Guard: nothing meaningful to map
+    if not report or report.get("risk_level") in ("unknown", "clean"):
+        print("[MITRE] Risk level too low or report empty — skipping ATT&CK mapping")
+        return {
+            "mitre_mapping": {
+                "mitre_techniques": [],
+                "tactic_categories": [],
+                "note": "No significant threat indicators found; ATT&CK mapping not applicable",
+            }
+        }
+
+    messages = [
+        SystemMessage(content=MITRE_SYSTEM_PROMPT),
+        HumanMessage(content=json.dumps(report, indent=2)),
+    ]
+
+    try:
+        response = llm.invoke(messages)
+        mapping = json.loads(response.content)
+        technique_count = len(mapping.get("mitre_techniques", []))
+        print(f"[MITRE] Mapped {technique_count} ATT&CK technique(s): "
+              f"{[t['id'] for t in mapping.get('mitre_techniques', [])]}")
+    except json.JSONDecodeError:
+        print("[MITRE] LLM returned non-JSON — storing raw text as note")
+        mapping = {
+            "mitre_techniques": [],
+            "tactic_categories": [],
+            "note": f"Mapping parse error. Raw LLM output: {response.content[:300]}",
+        }
+    except Exception as e:
+        print(f"[MITRE] Unexpected error: {e}")
+        mapping = {
+            "mitre_techniques": [],
+            "tactic_categories": [],
+            "note": f"Mapping failed: {str(e)}",
+        }
+
+    return {"mitre_mapping": mapping}
